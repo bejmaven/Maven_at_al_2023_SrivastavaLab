@@ -9,7 +9,7 @@ Manuscript link will be posted here when available.
 ## Analysis
 The data processing and analysis were carried out using Cellranger, Seurat, and supporting packages, as detailed in the provided scripts.
 
-### Day 8 Cardiac Progeinitors (CPs) Data Analysis Overview
+### Day 8 Cardiac Progenitors (CPs) Data Analysis Overview
 
 1. Process scRNA with 10x Genomics Cellranger pipelines:
    - `cellranger count`
