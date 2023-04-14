@@ -1,0 +1,327 @@
+---
+title: "cp_6_WT_KOs_analysis"
+author: "Bonnie EJ Maven"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+# 0. Overview
+This script is to analyze the WT, ISL1 KO and NKX2.5 KO cells from day 8 CPs. These data are for Main Fig 4, Supp Fig 6.
+
+# 1. Set up; Load Libraries & Set Working Directory
+Load required libraries for analyses.
+
+```{r}
+# Load libraries.
+library(Seurat)
+library(harmony)
+library(ggplot2)
+library(monocle3)
+
+# Set working directory based on the path of the current open file.
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+```
+
+# 2. Set up; Load Seurat Object
+
+```{r}
+# Assign a base name for folder and file naming consistency.
+baseName = "cp_cardiac_WT_KOs_bc"
+
+dir.create(paste("../analyses/", baseName, sep = ""))
+
+# Load the seurat_dataset object.
+cp_cardiac_WT_KOs <- readRDS(file = paste("../data/RDS/", baseName, ".rds", sep = ""))
+```
+
+# 3. Cluster and Replicate Overview
+
+```{r}
+# To make it cleaner, change the order of each genotype so that WT is first.
+cp_cardiac_WT_KOs$genotype <- factor(cp_cardiac_WT_KOs$genotype,levels=c("WT", "IKO", "NKO"))
+
+# Overview of clusters; We will save this later on.
+DimPlot(object = cp_cardiac_WT_KOs, reduction = "umap", group.by = "seurat_clusters")
+
+# Overview of key cardiac genes.
+pdf(paste("../analyses/", baseName, "_FeaturePlot_cardiac_markers.pdf", sep = ""))
+FeaturePlot(cp_cardiac_WT_KOs,  features = "TNNT2")
+FeaturePlot(cp_cardiac_WT_KOs,  features = "MYL9")
+FeaturePlot(cp_cardiac_WT_KOs,  features = "HEY1")
+dev.off()
+
+# Overview of genotypes (ISL1 KO, NKX2.5 KO and WT)
+pdf(paste("../analyses/", baseName, "_DimPlot_genotypes.pdf", sep = ""))
+DimPlot(object = cp_cardiac_WT_KOs, reduction = "umap", group.by = "genotype")
+dev.off()
+
+
+# Overview of replicates (Rep 1, 2 and 3 in each genotype).
+
+# First, subset each genotype.
+Idents(cp_cardiac_WT_KOs) <- "genotype"
+cp_cardiac_WT_KOs_WTsubset.cells <- WhichCells(object = cp_cardiac_WT_KOs, idents = "WT")
+cp_cardiac_WT_KOs_WTsubset <- subset(cp_cardiac_WT_KOs, cells = cp_cardiac_WT_KOs_WTsubset.cells)
+
+cp_cardiac_WT_KOs_IKOsubset.cells <- WhichCells(object = cp_cardiac_WT_KOs, idents = "IKO")
+cp_cardiac_WT_KOs_IKOsubset <- subset(cp_cardiac_WT_KOs, cells = cp_cardiac_WT_KOs_IKOsubset.cells)
+
+cp_cardiac_WT_KOs_NKOsubset.cells <- WhichCells(object = cp_cardiac_WT_KOs, idents = "NKO")
+cp_cardiac_WT_KOs_NKOsubset <- subset(cp_cardiac_WT_KOs, cells = cp_cardiac_WT_KOs_NKOsubset.cells)
+
+# Now, save these replicate plots.
+pdf(paste("../analyses/", baseName, "_DimPlot_replicate_overview.pdf", sep = ""))
+DimPlot(cp_cardiac_WT_KOs_WTsubset, reduction = "umap", group.by = "gem.group")
+DimPlot(cp_cardiac_WT_KOs_IKOsubset, reduction = "umap", group.by = "gem.group")
+DimPlot(cp_cardiac_WT_KOs_NKOsubset, reduction = "umap", group.by = "gem.group")
+dev.off()
+```
+
+# 4. Marker Overview
+Similar analysis to data from Fig 1.
+
+```{r}
+# First determine # of cells in each cluster (lowest is 379)
+table(cp_cardiac_WT_KOs$seurat_clusters)
+
+# Change ident to seurat_clusters
+Idents(cp_cardiac_WT_KOs) <- "seurat_clusters"
+
+# Determine markers for each cluster.
+cluster_markers <- FindAllMarkers(cp_cardiac_WT_KOs, only.pos = TRUE, logfc.threshold = 0.25, max.cells.per.ident = 358,  random.seed = 8)
+
+cluster_markers %>%
+    group_by(cluster) %>%
+    top_n(n = 100, wt = avg_log2FC) -> cluster_markers_top100
+
+write.csv(cluster_markers_top100, paste("../analyses/", baseName, "FindAllMarkers_unnamed_clusters.csv", sep = ""))
+
+# Off of R, each list was analyzed by Panther GO to determine cluster identity. Tentatively, the cluster identity is the following, which will be confirmed with pseudotime analysis.
+# 0" = "1_transition", "1" = "3_late", "2" = "0_early", "3" = "4_mixed", "4" = "2_transition")
+```
+
+# 5. Monocle Analysis
+```{r}
+# Confirm correct identity is set.
+Idents(cp_cardiac_WT_KOs) <- "seurat_clusters"
+
+# Changing Seurat to CDS format for use in Monocle.
+cds <- as.cell_data_set(cp_cardiac_WT_KOs)
+cds <- cluster_cells(cds)
+
+# Check how the cells partitioned.
+plot_cells(cds, color_cells_by = "partition")
+
+# Plot out the trajectories.
+cds <- learn_graph(cds)
+
+# Now choose the starting cell based on marker analyses. This will pop up a new window.
+# We chose the starting cell in the original cluster 0 because marker analyses indicated these were early cells.
+cds <- order_cells(cds, reduction_method = "UMAP")
+
+# Save this.
+pdf(paste("../analyses/", baseName, "_Monocle_labeled.pdf", sep = ""))
+plot_cells(cds,
+           color_cells_by = "pseudotime",
+           label_groups_by_cluster=FALSE,
+           label_leaves=FALSE,
+           label_branch_points=FALSE, label_cell_groups = FALSE, label_roots = TRUE)
+dev.off()
+
+# This confirms our trajectory as we determined by marker analyses. We will now change the Seurat cluster names to reflect this.
+```
+
+# 6. Rename Clusters
+
+```{r}
+# Save the old idents.
+Idents(cp_cardiac_WT_KOs) <- "seurat_clusters"
+cp_cardiac_WT_KOs[["original_seurat_clusters"]] <- Idents(object = cp_cardiac_WT_KOs)
+
+# Rename idents according to above work. Namely:
+# Cluster 0 will be 1_transition
+# Cluster 1 will be 2_late
+# Cluster 2 will be 0_early
+# Cluster 3 will be 3_mixed
+cp_cardiac_WT_KOs <- RenameIdents(object = cp_cardiac_WT_KOs, "0" = "1_transition", "1" = "3_late", "2" = "0_early", "3" = "4_mixed", "4" = "2_transition")
+
+# Save this as a new identity.
+cp_cardiac_WT_KOs@meta.data$named_clusters <- cp_cardiac_WT_KOs@active.ident
+
+# Change the order of the identities to make the data cleaner.
+cp_cardiac_WT_KOs$named_clusters <- factor(cp_cardiac_WT_KOs$named_clusters,levels=c("0_early", "1_transition", "2_transition", "3_late", "4_mixed"))
+
+# Now rename them so that the transition clusters are the same cluster.
+Idents(cp_cardiac_WT_KOs) <- "seurat_clusters"
+cp_cardiac_WT_KOs <- RenameIdents(object = cp_cardiac_WT_KOs, "0" = "transition", "1" = "late", "2" = "early", "3" = "mixed", "4" = "transition")
+
+# Save as a new cluster name.
+cp_cardiac_WT_KOs@meta.data$named_clusters_2 <- cp_cardiac_WT_KOs@active.ident
+
+# Clean the data.
+cp_cardiac_WT_KOs$named_clusters_2 <- factor(cp_cardiac_WT_KOs$named_clusters_2,levels=c("early", "transition", "late", "mixed"))
+```
+
+# 7. Overview Figures of Named Clusters
+Now that the clusters are properly named, we will generate overview figures for the manuscript.
+
+```{r}
+# Frequency of each genotype in cluster.
+samp_clus<-table(cp_cardiac_WT_KOs$genotype, cp_cardiac_WT_KOs$named_clusters_2)
+samp_clus_plot<-as.data.frame.table(samp_clus)
+
+pdf(paste("../analyses/", baseName, "_ggPlot_cluster_frequency.pdf", sep = ""))
+ggplot(samp_clus_plot, aes(fill=Var2, y=Freq, x=Var1)) + geom_bar(position='fill', stat='identity')
+dev.off()
+
+# And now save the overview figure.
+pdf(paste("../analyses/", baseName, "_DimPlot_named_clusters.pdf", sep = ""))
+DimPlot(cp_cardiac_WT_KOs, group.by = "named_clusters") # using original named_clusters here.
+dev.off()
+```
+
+# 8. Heatmap of Named Clusters
+```{r}
+# Generate markers again. These should be similar to before, but with the new cluster names integrated into the data
+table(cp_cardiac_WT_KOs$named_clusters) # lowest cell number is 445.
+
+Idents(cp_cardiac_WT_KOs) <- "named_clusters_2"
+
+# Now we have to downsample for the cluster analysis and heatmap.
+cp_cardiac_WT_KOs_cluster_down.cells <- WhichCells(cp_cardiac_WT_KOs, downsample = 445, seed = 8)
+cp_cardiac_WT_KOs_cluster_down <- subset(x = cp_cardiac_WT_KOs, cells = cp_cardiac_WT_KOs_cluster_down.cells)
+
+cluster_markers <- FindAllMarkers(cp_cardiac_WT_KOs_cluster_down, only.pos = TRUE, logfc.threshold = 0.25, random.seed = 8)
+
+cluster_markers %>%
+    group_by(cluster) %>%
+    top_n(n = 100, wt = avg_log2FC) -> cluster_markers_top100
+
+# Save table.
+write.csv(cluster_markers_top100, paste("../analyses/", baseName, "_markers_named_clusters.csv", sep = ""))
+
+# Save heatmap.
+png(paste("../analyses/", baseName, "_clusters_top100_deg_heatmap.png", sep = ""), res = 720, height = 20, width = 20)
+DoHeatmap(object = cp_cardiac_WT_KOs_cluster_down, features = cluster_markers_top100$gene)
+dev.off()
+```
+
+# 9. KO Consequences in All Clusters
+```{r}
+# Determine lowest cell number.
+table(cp_cardiac_WT_KOs$named_clusters)
+
+# Downsample to the lowest cell number.
+Idents(cp_cardiac_WT_KOs) <- "genotype"
+cp_cardiac_WT_KOs_down.cells <- WhichCells(cp_cardiac_WT_KOs_transition_late, downsample = 3174, seed = 8)
+cp_cardiac_WT_KOs_down <- subset(cp_cardiac_WT_KOs, cells = cp_cardiac_WT_KOs_down.cells)
+
+# Confirm downsampling.
+table(cp_cardiac_WT_KOs_down@meta.data$genotype)
+
+# FindMarkers for each genotype.
+Idents(cp_cardiac_WT_KOs_down) <- "genotype"
+
+WT_KOs_down_IKO_markers <- FindMarkers(cp_cardiac_WT_KOs_down, ident.1 = "IKO", ident.2 = "WT")
+WT_KOs_down_NKO_markers <- FindMarkers(cp_cardiac_WT_KOs_down, ident.1 = "NKO", ident.2 = "WT")
+
+# Save these tables.
+write.csv(WT_KOs_down_IKO_markers, paste("../analyses/", baseName, "FindAllMarkers_allClusters_IKO.csv", sep = ""))
+write.csv(WT_KOs_down_NKO_markers, paste("../analyses/", baseName, "FindAllMarkers_allClusters_NKO.csv", sep = ""))
+```
+
+# 10. KO Consequences in Transition and Late Clusters
+```{r}
+# Separating out the transition and late clusters.
+Idents(cp_cardiac_WT_KOs) <- "named_clusters_2"
+cp_cardiac_WT_KOs_transition_late.cells <- WhichCells(object = cp_cardiac_WT_KOs, idents = c("transition", "late"), seed = 8)
+cp_cardiac_WT_KOs_transition_late <- subset(x = cp_cardiac_WT_KOs, cells = cp_cardiac_WT_KOs_transition_late.cells)
+
+# Lowest cell number (3174 cells)
+table(cp_cardiac_WT_KOs_transition_late@meta.data$genotype)
+
+# Downsample to the lowest cell number.
+Idents(cp_cardiac_WT_KOs_transition_late) <- "genotype"
+cp_cardiac_WT_KOs_transition_late_down.cells <- WhichCells(cp_cardiac_WT_KOs_transition_late, downsample = 3174, seed = 8)
+cp_cardiac_WT_KOs_transition_late_down <- subset(x = cp_cardiac_WT_KOs_transition_late, cells = cp_cardiac_WT_KOs_transition_late_down.cells)
+
+# Confirm downsampling.
+table(cp_cardiac_WT_KOs_transition_late_down@meta.data$genotype)
+
+# FindMarkers for each genotype.
+Idents(cp_cardiac_WT_KOs_transition_late_down) <- "genotype"
+
+transition_late_down_IKO_markers <- FindMarkers(cp_cardiac_WT_KOs_transition_late_down, ident.1 = "IKO", ident.2 = "WT")
+transition_late_down_NKO_markers <- FindMarkers(cp_cardiac_WT_KOs_transition_late_down, ident.1 = "NKO", ident.2 = "WT")
+
+# Save these tables.
+write.csv(transition_late_down_IKO_markers, paste("../analyses/", baseName, "FindAllMarkers_TransitionLate_IKO.csv", sep = ""))
+write.csv(transition_late_down_NKO_markers, paste("../analyses/", baseName, "FindAllMarkers_TransitionLate_NKO.csv", sep = ""))
+
+# Heatmap to display these markers.
+
+# Marker list to display based on GO analyses done separately.
+up_KOs <- readLines(con = paste("../analyses/", baseName, "up_KOs_input.csv"))
+down_KOs <- readLines(con = paste("../analyses/", baseName, "down_KOs_input.csv"))
+up_NKO <- readLines(con = paste("../analyses/", baseName, "up_NKO_input.csv"))
+
+transition_late_markers <- c(up_KOs, down_KOs, up_NKO)
+
+DoHeatmap(cp_cardiac_WT_KOs_transition_late_down, features = transition_late_markers)
+```
+
+
+# 11. sessionInfo
+Capture all session info current as of these analyses.
+
+```{r}
+sessionInfo()
+
+# to comment out a line of text use the keyboard shortcut: Command + Shift + C
+# 
+# # 
+# R version 4.2.0 (2022-04-22)
+# Platform: x86_64-apple-darwin17.0 (64-bit)
+# Running under: macOS Monterey 12.5.1
+# 
+# Matrix products: default
+# LAPACK: /Library/Frameworks/R.framework/Versions/4.2/Resources/lib/libRlapack.dylib
+# 
+# locale:
+#   [1] en_US.UTF-8/en_US.UTF-8/en_US.UTF-8/C/en_US.UTF-8/en_US.UTF-8
+# 
+# attached base packages:
+#   [1] stats     graphics  grDevices utils     datasets  methods   base     
+# 
+# other attached packages:
+#   [1] SeuratWrappers_0.3.0 sctransform_0.3.3    cowplot_1.1.1        ggplot2_3.3.6        harmony_0.1.0       
+# [6] Rcpp_1.0.9           Seurat_4.1.1         dplyr_1.0.9          sp_1.5-0             SeuratObject_4.1.0  
+# 
+# loaded via a namespace (and not attached):
+#   [1] Rtsne_0.16            colorspace_2.0-3      deldir_1.0-6          ellipsis_0.3.2        ggridges_0.5.3       
+# [6] rstudioapi_0.13       spatstat.data_2.2-0   farver_2.1.1          leiden_0.4.2          listenv_0.8.0        
+# [11] remotes_2.4.2         ggrepel_0.9.1         RSpectra_0.16-1       fansi_1.0.3           codetools_0.2-18     
+# [16] splines_4.2.0         R.methodsS3_1.8.2     polyclip_1.10-0       jsonlite_1.8.0        ica_1.0-3            
+# [21] cluster_2.1.3         png_0.1-7             R.oo_1.25.0           rgeos_0.5-9           uwot_0.1.11          
+# [26] shiny_1.7.2           spatstat.sparse_2.1-1 BiocManager_1.30.18   compiler_4.2.0        httr_1.4.3           
+# [31] assertthat_0.2.1      Matrix_1.4-1          fastmap_1.1.0         lazyeval_0.2.2        limma_3.52.2         
+# [36] cli_3.3.0             later_1.3.0           htmltools_0.5.3       tools_4.2.0           rsvd_1.0.5           
+# [41] igraph_1.3.4          gtable_0.3.0          glue_1.6.2            RANN_2.6.1            reshape2_1.4.4       
+# [46] scattermore_0.8       vctrs_0.4.1           nlme_3.1-158          progressr_0.10.1      lmtest_0.9-40        
+# [51] spatstat.random_2.2-0 stringr_1.4.0         globals_0.15.1        mime_0.12             miniUI_0.1.1.1       
+# [56] lifecycle_1.0.1       irlba_2.3.5           goftest_1.2-3         future_1.27.0         MASS_7.3-58          
+# [61] zoo_1.8-10            scales_1.2.0          spatstat.core_2.4-4   promises_1.2.0.1      spatstat.utils_2.3-1 
+# [66] parallel_4.2.0        RColorBrewer_1.1-3    reticulate_1.25       pbapply_1.5-0         gridExtra_2.3        
+# [71] rpart_4.1.16          stringi_1.7.8         rlang_1.0.4           pkgconfig_2.0.3       matrixStats_0.62.0   
+# [76] lattice_0.20-45       ROCR_1.0-11           purrr_0.3.4           tensor_1.5            labeling_0.4.2       
+# [81] patchwork_1.1.1       htmlwidgets_1.5.4     tidyselect_1.1.2      parallelly_1.32.1     RcppAnnoy_0.0.19     
+# [86] plyr_1.8.7            magrittr_2.0.3        R6_2.5.1              generics_0.1.3        DBI_1.1.3            
+# [91] pillar_1.8.0          withr_2.5.0           mgcv_1.8-40           fitdistrplus_1.1-8    survival_3.3-1       
+# [96] abind_1.4-5           tibble_3.1.8          future.apply_1.9.0    crayon_1.5.1          KernSmooth_2.23-20   
+# [101] utf8_1.2.2            spatstat.geom_2.4-0   plotly_4.10.0         grid_4.2.0            data.table_1.14.2    
+# [106] digest_0.6.29         xtable_1.8-4          tidyr_1.2.0           httpuv_1.6.5          R.utils_2.12.0       
+# [111] munsell_0.5.0         viridisLite_0.4.0   
+```

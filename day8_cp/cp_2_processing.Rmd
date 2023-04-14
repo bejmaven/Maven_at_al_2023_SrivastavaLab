@@ -1,0 +1,353 @@
+---
+title: "cp_2_processing"
+author: "Bonnie EJ Maven"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+# 0. Overview
+
+This script is to process the day 8 CP Seurat object output from the first script (1_preprocessing_cp.Rmd). We will remove non-cardiac cells, clean up the data more, then split the data into the desired objects for further analyses in later scripts.
+
+# 1. Set up; Load Libraries & Set Working Directory
+Load required libraries for analyses.
+
+```{r}
+# Load libraries.
+library(Seurat)
+library(harmony)
+library(ggplot2)
+
+# Set working directory based on the path of the current open file.
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+```
+
+# 2. Set up; Load Seurat Object
+
+```{r}
+# Assign a base name for folder and file naming consistency.
+baseName = "cp_all"
+
+# Load the seurat_dataset object.
+cp_all <- readRDS(file = paste("../data/RDS/", baseName, "_bc.rds", sep = ""))
+```
+
+# 3. Identify Cardiac Cells
+These markers will identify which clusters have cardiac cells, in addition to which clusters are commonly known contaminant cells in in vitro cardiac differentiations.
+
+```{r}
+# Dot plot for general cardiac markers.
+general_cardiac <- c("ACTN2", "MYL2", "MYL3", "MYH6", "MYH7", "TNNT2", "TNNI3", "NPPA", "NPPB", "GJA1", "HAND1", "HAND2", "TBX5", "TBX20", "HEY2", "MESP1", "MESP2", "NKX2-5", "FOXF1")
+
+png(paste("../analyses/QC/", baseName, "_DotPlot_cardiac.png", sep = ""), width = 2000, height = 2000, res = 300)
+DotPlot(cp_all, features = general_cardiac, group.by = "seurat_clusters")+ theme(axis.text.x = element_text(angle = 45, hjust=1))
+dev.off()
+
+# Dot plot for endothelial markers.
+endothelial <- c("VWF", "PECAM1", "ESM1", "CD34", "CDH5", "ENG")
+
+png(paste("../analyses/QC/", baseName, "_DotPlot_endothelial.png", sep = ""), width = 2000, height = 2000, res = 300)
+DotPlot(cp_all, features = endothelial, group.by = "seurat_clusters")
+dev.off()
+
+# Dot plot for endoderm markers.
+endoderm <- c("SOX17", "FOXA2", "AFP", "HNF4A", "HHEX")
+
+png(paste("../analyses/QC/", baseName, "_DotPlot_endoderm.png", sep = ""), width = 2000, height = 2000, res = 300)
+DotPlot(cp_all, features = endoderm, group.by = "seurat_clusters")
+dev.off()
+
+# Dot plot for smooth muscle markers.
+smooth_muscle <- c("MYH11", "TAGLN", "CNN1", "ACTA2", "MYLK", "CALD1")
+
+png(paste("../analyses/QC/", baseName, "_DotPlot_smooth_muscle.png", sep = ""), width = 2000, height = 2000, res = 300)
+DotPlot(cp_all, features = smooth_muscle, group.by = "seurat_clusters")
+dev.off()
+
+# Based on these data cardiac clusters are: 0, 1, 2, 3, 4, 6, 11, 12
+
+# Clean up the environment.
+rm(baseName)
+```
+
+# 4. Remove Non-Cardiac Clusters
+Remove the non-cardiac clusters.
+
+```{r}
+# Assign baseName for naming.
+baseName2 = "cp_cardiac_all"
+
+# Subset cardiac clusters.
+cp_all_cardiac <- subset(cp_all, idents = c("0","1","2","3","4","6","11","12"))
+
+# Due to further downstream issues of the SOX2+ cells, it is clear they are also a contaminating cell type.
+cp_all_cardiac_SOX2_0.cells <- WhichCells(object = cp_all_cardiac, expression = SOX2 == 0)
+cp_all_cardiac <- subset(cp_all_cardiac, cells = cp_all_cardiac_SOX2_0.cells)
+
+# Run harmony again to account for any additional batch effects.
+cp_all_cardiac <- RunHarmony(cp_all_cardiac, group.by.vars = "gem.group", plot_convergence = T, assay.use = "SCT")
+
+# Run Elbowplot to see what PC is the best cut off for the dimensions.
+cp_all_cardiac <- RunPCA(cp_all_cardiac, verbose = TRUE)
+ElbowPlot(cp_all_cardiac) # Use 30 dimensions.
+
+# Run UMAP and clustering. Use PC # determined from ElbowPlot.
+cp_all_cardiac <- RunUMAP(cp_all_cardiac, dims = 1:30, verbose = TRUE)
+cp_all_cardiac <- FindNeighbors(cp_all_cardiac, dims = 1:30, verbose = TRUE)
+cp_all_cardiac <- FindClusters(cp_all_cardiac, verbose = TRUE, resolution = 0.3)
+
+# Save UMAP as part of QC.
+pdf(paste("../analyses/QC/", baseName2, "_bc_DimPlot.pdf", sep = ""))
+DimPlot(cp_all_cardiac, reduction = "umap", label = T)
+DimPlot(cp_all_cardiac, reduction = "umap", group.by = "gem.group")
+dev.off()
+
+# Save Seurat object before proceeding.
+saveRDS(cp_all_cardiac, file = paste("../data/RDS/", baseName2, "_bc.rds", sep = ""))
+
+# Clean up the environment.
+rm(baseName2)
+```
+
+# 5. Subset siRNA Clusters
+
+Now subsetting siRNA Clusters to further analyze in a different script.
+
+```{r}
+# Subset out siRNA conditions.
+Idents(cp_all_cardiac) <- "gem.group"
+table(cp_all_cardiac@meta.data$gem.group, cp_all_cardiac@meta.data$orig.ident)
+
+cp_all_cardiac@meta.data$gem.group
+cp_cardiac_siRNA <- subset(cp_all_cardiac, idents = c("0_siRNA_control", "0_siRNA_ISL1"))
+
+# Confirm subset.
+table(cp_cardiac_siRNA@meta.data$gem.group)
+
+# Assign baseName for naming.
+baseName3 = "cp_cardiac_siRNA"
+
+# Run harmony again to account for any additional batch effects.
+cp_cardiac_siRNA <- RunHarmony(cp_cardiac_siRNA, group.by.vars = "gem.group", plot_convergence = T, assay.use = "SCT")
+
+# Run Elbowplot to see what PC is the best cut off for the dimensions.
+cp_cardiac_siRNA <- RunPCA(cp_cardiac_siRNA, verbose = TRUE)
+ElbowPlot(cp_cardiac_siRNA)
+# Use 30 dimensions.
+
+# Run UMAP and clustering. Use PC # determined from ElbowPlot.
+cp_cardiac_siRNA <- RunUMAP(cp_cardiac_siRNA, dims = 1:30, verbose = TRUE)
+cp_cardiac_siRNA <- FindNeighbors(cp_cardiac_siRNA, dims = 1:30, verbose = TRUE)
+cp_cardiac_siRNA <- FindClusters(cp_cardiac_siRNA, verbose = TRUE, resolution = 0.15) # Low resolution.
+
+# Save UMAP as part of QC.
+pdf(paste("../analyses/QC/", baseName3, "_bc_DimPlot.pdf", sep = ""))
+DimPlot(cp_cardiac_siRNA, reduction = "umap", label = T)
+DimPlot(cp_cardiac_siRNA, reduction = "umap", group.by = "gem.group")
+dev.off()
+
+
+# Save Seurat object.
+saveRDS(cp_cardiac_siRNA, file = paste("../data/RDS/", baseName3, "_bc.rds", sep = ""))
+
+# Clean up the environment.
+rm(baseName3)
+```
+
+# 6. Add Genotype Metadata
+
+Adding replicate information to each replicate for day 8 WT, ISL1-/- and NKX2.5-/- cells. Then will recluster and save this object to be analyzed later.
+
+```{r}
+# Remove siRNA conditions.
+Idents(cp_all_cardiac) <- "gem.group"
+
+table(cp_all_cardiac@meta.data$gem.group)
+cp_all_cardiac <- RenameIdents(object = cp_all_cardiac, "0_siRNA_control" = "siRNA_control", "0_siRNA_ISL1" = "siRNA_ISL1")
+
+cp_cardiac_WT_KOs <- subset(cp_all_cardiac, idents = c("siRNA_control", "siRNA_ISL1"), invert = TRUE)
+
+# Label genotype in metadata. IKO, NKO, WT.
+cp_cardiac_WT_KOs@meta.data$genotype <- sub("_.*", "", cp_cardiac_WT_KOs@meta.data$gem.group)
+
+# Confirm change.
+table(cp_cardiac_WT_KOs@meta.data$gem.group, cp_cardiac_WT_KOs@meta.data$genotype)
+
+# Assign baseName for naming.
+baseName4 = "cp_cardiac_WT_KOs"
+
+# Run harmony again to account for any additional batch effects.
+cp_cardiac_WT_KOs <- RunHarmony(cp_cardiac_WT_KOs, group.by.vars = "gem.group", plot_convergence = T, assay.use = "SCT")
+
+# Run Elbowplot to see what PC is the best cut off for the dimensions.
+cp_cardiac_WT_KOs <- RunPCA(cp_cardiac_WT_KOs, verbose = TRUE)
+ElbowPlot(cp_cardiac_WT_KOs)
+# Use 15 dimensions.
+
+# Run UMAP and clustering. Use PC # determined from ElbowPlot.
+cp_cardiac_WT_KOs <- RunUMAP(cp_cardiac_WT_KOs, dims = 1:15, verbose = TRUE)
+cp_cardiac_WT_KOs <- FindNeighbors(cp_cardiac_WT_KOs, dims = 1:15, verbose = TRUE)
+cp_cardiac_WT_KOs <- FindClusters(cp_cardiac_WT_KOs, verbose = TRUE)
+
+# Save UMAP as part of QC.
+pdf(paste("../analyses/QC/", baseName4, "_bc_DimPlot.pdf", sep = ""))
+DimPlot(cp_cardiac_WT_KOs, reduction = "umap", label = T)
+DimPlot(cp_cardiac_WT_KOs, reduction = "umap", group.by = "gem.group")
+dev.off()
+
+# Save Seurat object.
+saveRDS(cp_cardiac_WT_KOs, file = paste("../data/RDS/", baseName4, "_bc.rds", sep = ""))
+
+# Clean up the environment.
+rm(baseName4)
+```
+
+# 7. Subset WT + ISL1 KO Cells
+This is to subset the WT and ISL1 KO cells from the day 8 CPs to analyze separately from the NKX2.5 KO cells.
+
+```{r}
+# Remove NKO genotype
+Idents(cp_cardiac_WT_KOs) <- "genotype"
+cp_cardiac_WT_IKO <- subset(cp_cardiac_WT_KOs, idents = c("NKO"), invert = TRUE)
+
+# Assign baseName for naming.
+baseName5 = "cp_cardiac_WT_IKO"
+
+# Run harmony again to account for any additional batch effects.
+cp_cardiac_WT_IKO <- RunHarmony(cp_cardiac_WT_IKO, group.by.vars = "gem.group", plot_convergence = T, assay.use = "SCT")
+
+# Run Elbowplot to see what PC is the best cut off for the dimensions.
+cp_cardiac_WT_IKO <- RunPCA(cp_cardiac_WT_IKO, verbose = TRUE)
+ElbowPlot(cp_cardiac_WT_IKO)
+# Use 30 dimensions.
+
+# Run UMAP and clustering. Use PC # determined from ElbowPlot.
+cp_cardiac_WT_IKO <- RunUMAP(cp_cardiac_WT_IKO, dims = 1:30, verbose = TRUE)
+cp_cardiac_WT_IKO <- FindNeighbors(cp_cardiac_WT_IKO, dims = 1:30, verbose = TRUE)
+cp_cardiac_WT_IKO <- FindClusters(cp_cardiac_WT_IKO, verbose = TRUE, resolution = 0.2)
+
+# Save UMAP as part of QC.
+pdf(paste("../analyses/QC/", baseName5, "_bc_DimPlot.pdf", sep = ""))
+DimPlot(cp_cardiac_WT_IKO, reduction = "umap", label = T)
+DimPlot(cp_cardiac_WT_IKO, reduction = "umap", group.by = "gem.group")
+dev.off()
+
+# Save Seurat object.
+saveRDS(cp_cardiac_WT_IKO, file = paste("../data/RDS/", baseName5, "_bc.rds", sep = ""))
+
+# Clean up the environment.
+rm(baseName5)
+```
+
+# 8. Subset WT Cells
+This is to subset the WT cells from the day 8 CPs to analyze separately from the KO cells.
+
+```{r}
+# Remove IKO genotype
+Idents(cp_cardiac_WT_IKO) <- "genotype"
+cp_cardiac_WT <- subset(cp_cardiac_WT_IKO, idents = c("IKO"), invert = TRUE)
+
+# Assign baseName for naming.
+baseName6 = "cp_cardiac_WT"
+
+# Did not recluster because I wanted to maintain the structure of the UMAP to better compare KO data overlaid with WT only data.
+
+# Save UMAP as part of QC.
+pdf(paste("../analyses/QC/", baseName6, "_DimPlot.pdf", sep = ""))
+DimPlot(cp_cardiac_WT, reduction = "umap", label = T)
+DimPlot(cp_cardiac_WT, reduction = "umap", group.by = "gem.group")
+dev.off()
+
+# Save Seurat object. I removed the "bc"/batch correction because I did not due it again on this object (see above).
+saveRDS(cp_cardiac_WT, file = paste("../data/RDS/", baseName6, ".rds", sep = ""))
+
+# Clean up the environment.
+rm(baseName6)
+```
+
+# 9. sessionInfo
+Capture the current session information.
+
+```{r}
+sessionInfo()
+
+# To comment out a line of text use the keyboard shortcut: Command + Shift + C
+
+# 
+# R version 4.2.0 (2022-04-22)
+# Platform: x86_64-apple-darwin17.0 (64-bit)
+# Running under: macOS Monterey 12.4
+# 
+# Matrix products: default
+# LAPACK: /Library/Frameworks/R.framework/Versions/4.2/Resources/lib/libRlapack.dylib
+# 
+# locale:
+#   [1] en_US.UTF-8/en_US.UTF-8/en_US.UTF-8/C/en_US.UTF-8/en_US.UTF-8
+# 
+# attached base packages:
+#   [1] grid      stats     graphics  grDevices utils     datasets  methods   base     
+# 
+# other attached packages:
+#   [1] SeuratWrappers_0.3.0  sctransform_0.3.3     shiny_1.7.2           harmony_0.1.0        
+# [5] Rcpp_1.0.9            RColorBrewer_1.1-3    circlize_0.4.15       ComplexHeatmap_2.12.0
+# [9] cowplot_1.1.1         ggsci_2.9             forcats_0.5.1         stringr_1.4.0        
+# [13] purrr_0.3.4           readr_2.1.2           tidyr_1.2.0           tibble_3.1.8         
+# [17] ggplot2_3.3.6         tidyverse_1.3.2       patchwork_1.1.1       Seurat_4.1.1         
+# [21] sp_1.5-0              SeuratObject_4.1.0    dplyr_1.0.9          
+# 
+# loaded via a namespace (and not attached):
+#   [1] utf8_1.2.2            R.utils_2.12.0        reticulate_1.25      
+# [4] tidyselect_1.1.2      htmlwidgets_1.5.4     Rtsne_0.16           
+# [7] devtools_2.4.4        munsell_0.5.0         codetools_0.2-18     
+# [10] ragg_1.2.2            ica_1.0-3             future_1.27.0        
+# [13] miniUI_0.1.1.1        withr_2.5.0           spatstat.random_2.2-0
+# [16] colorspace_2.0-3      progressr_0.10.1      rstudioapi_0.13      
+# [19] stats4_4.2.0          ROCR_1.0-11           tensor_1.5           
+# [22] listenv_0.8.0         labeling_0.4.2        polyclip_1.10-0      
+# [25] farver_2.1.1          parallelly_1.32.1     vctrs_0.4.1          
+# [28] generics_0.1.3        R6_2.5.1              doParallel_1.0.17    
+# [31] clue_0.3-61           rsvd_1.0.5            spatstat.utils_2.3-1 
+# [34] cachem_1.0.6          assertthat_0.2.1      promises_1.2.0.1     
+# [37] scales_1.2.0          googlesheets4_1.0.0   rgeos_0.5-9          
+# [40] gtable_0.3.0          globals_0.15.1        processx_3.7.0       
+# [43] goftest_1.2-3         rlang_1.0.4           systemfonts_1.0.4    
+# [46] GlobalOptions_0.1.2   splines_4.2.0         lazyeval_0.2.2       
+# [49] gargle_1.2.0          spatstat.geom_2.4-0   broom_1.0.0          
+# [52] BiocManager_1.30.18   reshape2_1.4.4        abind_1.4-5          
+# [55] modelr_0.1.8          backports_1.4.1       httpuv_1.6.5         
+# [58] tools_4.2.0           usethis_2.1.6         ellipsis_0.3.2       
+# [61] spatstat.core_2.4-4   jquerylib_0.1.4       BiocGenerics_0.42.0  
+# [64] sessioninfo_1.2.2     ggridges_0.5.3        plyr_1.8.7           
+# [67] ps_1.7.1              prettyunits_1.1.1     rpart_4.1.16         
+# [70] deldir_1.0-6          pbapply_1.5-0         GetoptLong_1.0.5     
+# [73] urlchecker_1.0.1      S4Vectors_0.34.0      zoo_1.8-10           
+# [76] haven_2.5.0           ggrepel_0.9.1         cluster_2.1.3        
+# [79] fs_1.5.2              magrittr_2.0.3        RSpectra_0.16-1      
+# [82] data.table_1.14.2     scattermore_0.8       lmtest_0.9-40        
+# [85] reprex_2.0.1          RANN_2.6.1            googledrive_2.0.0    
+# [88] fitdistrplus_1.1-8    matrixStats_0.62.0    pkgload_1.3.0        
+# [91] hms_1.1.1             mime_0.12             xtable_1.8-4         
+# [94] readxl_1.4.0          IRanges_2.30.0        gridExtra_2.3        
+# [97] shape_1.4.6           compiler_4.2.0        KernSmooth_2.23-20   
+# [100] crayon_1.5.1          R.oo_1.25.0           htmltools_0.5.3      
+# [103] mgcv_1.8-40           later_1.3.0           tzdb_0.3.0           
+# [106] lubridate_1.8.0       DBI_1.1.3             dbplyr_2.2.1         
+# [109] MASS_7.3-58           Matrix_1.4-1          cli_3.3.0            
+# [112] R.methodsS3_1.8.2     parallel_4.2.0        igraph_1.3.4         
+# [115] pkgconfig_2.0.3       plotly_4.10.0         spatstat.sparse_2.1-1
+# [118] xml2_1.3.3            foreach_1.5.2         bslib_0.4.0          
+# [121] rvest_1.0.2           callr_3.7.1           digest_0.6.29        
+# [124] RcppAnnoy_0.0.19      spatstat.data_2.2-0   cellranger_1.1.0     
+# [127] leiden_0.4.2          uwot_0.1.11           curl_4.3.2           
+# [130] rjson_0.2.21          lifecycle_1.0.1       nlme_3.1-158         
+# [133] jsonlite_1.8.0        viridisLite_0.4.0     fansi_1.0.3          
+# [136] pillar_1.8.0          lattice_0.20-45       fastmap_1.1.0        
+# [139] httr_1.4.3            pkgbuild_1.3.1        survival_3.3-1       
+# [142] glue_1.6.2            remotes_2.4.2         png_0.1-7            
+# [145] iterators_1.0.14      stringi_1.7.8         sass_0.4.2           
+# [148] profvis_0.3.7         textshaping_0.3.6     memoise_2.0.1        
+# [151] irlba_2.3.5           future.apply_1.9.0   
+```
