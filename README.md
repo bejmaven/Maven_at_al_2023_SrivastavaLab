@@ -16,12 +16,12 @@ The data processing and analysis were carried out using Cellranger, Seurat, and 
    - `cellranger aggr`
 
 2. Analyze scRNA seq data with Seurat using cp scripts 1-6 found in the `day8_cp/*/` folder:
-- 'cp_1_preprocessing.Rmd': Data import, QC filtering, and clustering.
-- 'cp_2_processing.Rmd': Data subsetting into objects used in the subsequent four analysis scripts.
-- 'cp_3_WT_IKO_analysis.Rmd': Analysis of WT and ISL1 KO subsets.
-- 'cp_4_WT_analysis.Rmd': Analysis of WT subset.
-- 'cp_5_siRNA_analysis.Rmd': Analysis of siRNA conditions subsets.
-- 'cp_6_WT_KOs_analysis.Rmd': Analysis of WT, ISL1 KO, and NKX2.5 KO subsets.
+- `cp_1_preprocessing.Rmd`: Data import, QC filtering, and clustering.
+- `cp_2_processing.Rmd`: Data subsetting into objects used in the subsequent four analysis scripts.
+- `cp_3_WT_IKO_analysis.Rmd`: Analysis of WT and ISL1 KO subsets.
+- `cp_4_WT_analysis.Rmd`: Analysis of WT subset.
+- `cp_5_siRNA_analysis.Rmd`: Analysis of siRNA conditions subsets.
+- `cp_6_WT_KOs_analysis.Rmd`: Analysis of WT, ISL1 KO, and NKX2.5 KO subsets.
 
 ## Data Availability
 
